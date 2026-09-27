@@ -1,0 +1,114 @@
+/*
+ * Jenkinsfile-single-ec2
+ * FAST-TRACK variant: use this when Jenkins and the app run on the SAME EC2
+ * instance (recommended if you're short on time). No SSH step needed since
+ * Jenkins can run `docker` commands directly on the local Docker daemon.
+ *
+ * To use: in your Jenkins Pipeline job, set "Script Path" to
+ * "Jenkinsfile-single-ec2" instead of "Jenkinsfile".
+ *
+ * Required Jenkins credential:
+ *   - "dockerhub-creds" : Username/Password credential for Docker Hub
+ *
+ * Required Jenkins plugins: Docker Pipeline, Git
+ */
+
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+        DOCKERHUB_USERNAME    = "${DOCKERHUB_CREDENTIALS_USR}"
+        IMAGE_NAME            = "${DOCKERHUB_USERNAME}/devops-capstone-app"
+        IMAGE_TAG             = "${env.BUILD_NUMBER}"
+        CONTAINER_NAME        = "devops-capstone-app"
+        APP_PORT              = "3000"
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '15'))
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source code from GitHub...'
+                checkout scm
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                dir('app') {
+                    sh 'npm ci || npm install'
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                dir('app') {
+                    sh 'npm test'
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                echo "Building Docker image ${IMAGE_NAME}:${IMAGE_TAG}"
+                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
+            }
+        }
+
+        stage('Docker Push') {
+            steps {
+                echo 'Logging in and pushing image to Docker Hub...'
+                sh """
+                    echo "${DOCKERHUB_CREDENTIALS_PSW}" | docker login -u "${DOCKERHUB_CREDENTIALS_USR}" --password-stdin
+                    docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                    docker push ${IMAGE_NAME}:latest
+                    docker logout
+                """
+            }
+        }
+
+        stage('Deploy Locally') {
+            steps {
+                echo 'Deploying container on this EC2 instance...'
+                sh """
+                    docker stop ${CONTAINER_NAME} || true
+                    docker rm ${CONTAINER_NAME} || true
+                    docker run -d \
+                        --name ${CONTAINER_NAME} \
+                        --restart unless-stopped \
+                        -p ${APP_PORT}:${APP_PORT} \
+                        -e APP_VERSION=${IMAGE_TAG} \
+                        ${IMAGE_NAME}:latest
+                    docker image prune -f
+                """
+            }
+        }
+
+        stage('Post-Deploy Health Check') {
+            steps {
+                sh """
+                    sleep 5
+                    curl -sf http://localhost:${APP_PORT}/health || exit 1
+                """
+                echo "Deployment verified healthy: build #${IMAGE_TAG}"
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Pipeline succeeded. Deployed ${IMAGE_NAME}:${IMAGE_TAG} locally on port ${APP_PORT}"
+        }
+        failure {
+            echo "❌ Pipeline failed. Check the stage logs above."
+        }
+    }
+}
