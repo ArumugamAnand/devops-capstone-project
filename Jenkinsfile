@@ -26,7 +26,7 @@ pipeline {
         DOCKERHUB_USERNAME    = "${DOCKERHUB_CREDENTIALS_USR}"
         IMAGE_NAME            = "${DOCKERHUB_USERNAME}/devops-capstone-app"
         IMAGE_TAG             = "${env.BUILD_NUMBER}"
-        APP_EC2_HOST          = "ubuntu@<APP_EC2_PUBLIC_IP>"   // <-- replace with your App EC2 address
+        APP_EC2_HOST = "ubuntu@16.171.7.91"  // <-- replace with your App EC2 address
         CONTAINER_NAME        = "devops-capstone-app"
         APP_PORT              = "3000"
     }
